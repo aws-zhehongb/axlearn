@@ -58,6 +58,9 @@ def _mha_forward(query, key, value, causal, softmax_scale):
       assert (num_heads % 2) == 0 and (num_heads // 2 > 0), f'unexpect num_heads: {num_heads}'
       attn_output, lse = flash_fwd[batch_size, vnc(2), num_heads//2](q, k, v, seed, use_causal_mask=causal, softmax_scale=softmax_scale, mixed_precision=True, dropout_p=0.0)
   else:
+      from neuronxcc.nki._private_kernels.legacy.attention import flash_fwd
+      from neuronxcc.nki._private_kernels.attention import flash_fwd_shardable
+      from neuronxcc.starfish.penguin.targets.nki.private_api import vnc
       attn_output, lse = nki_call(
           partial(flash_fwd_shardable if use_lnc else flash_fwd, use_causal_mask=causal, softmax_scale=softmax_scale, mixed_precision=True, dropout_p=0.0),
           q, k, v, seed, 
@@ -93,6 +96,9 @@ def _mha_backward(causal, softmax_scale, res, d_attn_output):
       assert (num_heads % 2) == 0 and (num_heads // 2 > 0), f'unexpected num_heads: {num_heads}'
       d_query, d_key, d_value = flash_attn_bwd[batch_size, vnc(2), num_heads // 2](q, k, v, o, dy, lse, seed, use_causal_mask=causal, mixed_precision=True, dropout_p=0.0, softmax_scale=softmax_scale)
   else:
+      from neuronxcc.nki._private_kernels.legacy.attention import flash_attn_bwd
+      from neuronxcc.nki._private_kernels.attention import flash_attn_bwd_shardable
+      from neuronxcc.starfish.penguin.targets.nki.private_api import vnc
       d_query, d_key, d_value = nki_call(
           partial(flash_attn_bwd_shardable if use_lnc else flash_attn_bwd, use_causal_mask=causal, mixed_precision=True, dropout_p=0.0, softmax_scale=softmax_scale),
           q, k, v, o, dy, lse, seed,
