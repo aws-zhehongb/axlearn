@@ -10,6 +10,7 @@ functions are used to build the args for `get_get_trainer_config_fn`, including 
 See c4_trainer.py for how they are used.
 """
 
+import os
 import math
 from typing import Dict, List, Optional, Sequence, Tuple, Union
 
@@ -65,7 +66,7 @@ EVAL_EVERY_N_STEPS = 5_000
 
 # We typically use bfloat16 as the step dtype,
 # (but usually keep parameters and optimizer state in float32).
-STEP_DTYPE = jnp.bfloat16
+STEP_DTYPE = jnp.float32 if os.environ.get('USE_FP32_COMPUTE') == '1' else jnp.bfloat16
 
 
 # The default mesh-axis names for LM training, from least to most communication intensive.
@@ -574,7 +575,7 @@ def get_trainer_config_fn(
         )
         cfg.checkpointer.keep_every_n_steps = min(max_step, keep_every_n_steps)
         cfg.checkpointer.keep_last_n = 3
-        cfg.summary_writer.write_every_n_steps = min(eval_every_n_steps, 100)
+        cfg.summary_writer.write_every_n_steps = min(eval_every_n_steps, 10)
         if mesh_shape:
             assert len(mesh_axis_names) == len(
                 mesh_shape
