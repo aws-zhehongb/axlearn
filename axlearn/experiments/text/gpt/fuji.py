@@ -62,15 +62,14 @@ MAX_SEQUENCE_LENGTH = {
     Version.V3: 8192,
 }
 
-TRN_MODEL_AXIS_SIZE=64
-GRADIENT_ACCUMULATION_MICROBATCHES=16
+TRN_MODEL_AXIS_SIZE=int(os.environ.get("NEURON_TP_SIZE",64))
+GRADIENT_ACCUMULATION_MICROBATCHES=int(os.environ.get("NEURON_REPLICA_UBATCH",16))
 
 ROPE_THETA = {
     Version.V1: 5e5,
     Version.V2: 1e4,
     Version.V3: 5e5,
 }
-
 
 # Mapping from Fuji versions to total number of tokens used in training.
 TOTAL_TOKENS = {

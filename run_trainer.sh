@@ -18,11 +18,14 @@ TEST_ARTIFACTS_PATH="${ARTIFACTS_PATH}/t_$1/${TIMESTAMP}"
 mkdir -p "$TEST_ARTIFACTS_PATH"
 
 #UNIFIED MODEL CONFIG (WIP)
-#Unify all key config here and echo in logs to avoid doubts on the config used for each run
+#Control configs here and echo in logs to avoid doubts on the config used for each run
+#Please add relevant configs as we go
+#TODO : Convert these from env var to args for launch_trainer_main for upstreaming
+export NEURON_TP_SIZE=64
 export NEURON_VNC_SIZE=2
-#export NEURON_FSDP=1 #TODO: when it is ready
-#export NEURON_TP_SIZE=16 #TODO : link with fuji.py
-#export NEURON_REPLICA_UBATCH=16 ##TODO : link with fuji.py
+export NEURON_FSDP=0 #TODO: enable when ready
+export NEURON_FFP32_GRAD=0
+export NEURON_REPLICA_UBATCH=16
 
 NEURON_DUMP_PATH=${TEST_ARTIFACTS_PATH}/neuron_dump
 HLO_DUMP_PATH=${TEST_ARTIFACTS_PATH}/hlo_dump
@@ -59,8 +62,8 @@ OUTPUT_DIR="${TEST_ARTIFACTS_PATH}/axlearn_out"
 mkdir -p ${OUTPUT_DIR}
 DATA_DIR="gs://axlearn-public/tensorflow_datasets"
 
-echo "NEURON_RUN_INFO DIRECTORY: ${TEST_ARTIFACTS_PATH}" #Find artifacts from log files
-echo "NEURON_RUN_INFO CONFIG: VNC=${NEURON_VNC_SIZE} FSDP=${NEURON_FSDP}"
+echo "NEURON_RUN_INFO DIRECTORY: ${TEST_ARTIFACTS_PATH}" #Run artifacts are here
+echo "NEURON_RUN_INFO CONFIG: TP=${NEURON_TP_SIZE} VNC=${NEURON_VNC_SIZE} FSDP=${NEURON_FSDP} FP32_GRAD=${NEURON_FFP32_GRAD} REPLICA_UBATCH=${NEURON_REPLICA_UBATCH}"
 
 
 # Run the training script

@@ -7,6 +7,7 @@
 - Maintaining Polyak averages of model params (if enabled).
 """
 
+import os
 import dataclasses
 import enum
 from typing import Callable, Mapping, Optional, Protocol, Sequence, Tuple, NamedTuple, Dict
@@ -479,6 +480,10 @@ class AccumulatedLearner(Learner):
         metrics_accumulation_key_ops: Sequence[Dict[str, Optional[MetricsAccumulationOp]]] = []
 
     def __init__(self, cfg: Config, *, parent: Module):
+        use_fp32_grads = (os.environ.get("NEURON_FFP32_GRAD","0") == "1")
+        self.grad_type = jnp.bfloat16
+        if use_fp32_grads : 
+            self.grad_type = jnp.float32
         super().__init__(cfg, parent=parent)
 
     def forward_and_backward(
@@ -521,7 +526,7 @@ class AccumulatedLearner(Learner):
         )
 
         def _copy_zero(model_tree):
-            return jax.tree_map(lambda x: jnp.full_like(x, 0, dtype=jnp.float32), model_tree)
+            return jax.tree_map(lambda x: jnp.full_like(x, 0, dtype=self.grad_type), model_tree)
 
         def run_microbatch(gradient_buffer, microbatch):
             gradient_buffer, forward_outputs_buffer = gradient_buffer
@@ -531,7 +536,7 @@ class AccumulatedLearner(Learner):
                 inputs=microbatch,
                 should_compute_gradients=should_compute_gradients,
             )
-            microbatch_gradients = jax.tree_map(lambda x: x.astype(jnp.float32), microbatch_gradients)
+            microbatch_gradients = jax.tree_map(lambda x: x.astype(self.grad_type), microbatch_gradients)
 
             # accumulate gradients
             gradient_buffer = jax.tree_map(lambda x, y: x + y, microbatch_gradients, gradient_buffer)
