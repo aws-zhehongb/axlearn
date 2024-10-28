@@ -43,6 +43,7 @@ On `attention_logit_biases`:
 import enum
 import functools
 import math
+import os
 from enum import Enum, unique
 from typing import Any, Callable, Dict, List, NamedTuple, Optional, Sequence, Set, Tuple, Union
 
@@ -3769,6 +3770,14 @@ class PipelinedTransformerLayer(BaseStackedTransformerLayer):
 
     # TODO(sneha): extend_step
 
+def save_all_names_but_these(*names_not_to_save):
+    # Save all values, including unnamed ones, excluding the specified names.
+    names_not_to_save = frozenset(names_not_to_save)
+    def policy(prim, *_, **params):
+        if 'name' in params and params['name'] in names_not_to_save:
+            return False
+        return True
+    return policy
 
 def build_remat_spec(
     stack_cfg: Union[
@@ -3802,22 +3811,33 @@ def build_remat_spec(
         return None
     print(f'Stack_cfg {stack_cfg}')
     if jax.default_backend() == 'neuron':
-        fused_qkv_name = stack_cfg.layer.self_attention.attention.input_linear.klass.__name__
-        ffn_name = stack_cfg.layer.feed_forward.klass.__name__
-        attention_name = stack_cfg.layer.self_attention.attention.klass.__name__
-        print(stack_cfg.layer.self_attention.attention)
-        return RematSpec(
-            prevent_cse=stack_cfg.klass is StackedTransformerLayer,
-            # If we are running inside a jax.lax.scan (Repeated/Pipelined transformers
-            # or Repeated Conformers) we can enable common subexpression elimination optimizations.
-            policy=config_for_function(jax.checkpoint_policies.save_any_names_but_these).set(
-                names_not_to_save=(["all_gather","before_attention", "before_thunk", "input_to_qkv"] +
-                    [f"{attention_name}.{el}"
-                    for el in ['input_qkv_ag', 'o_proj']] +
-                    [f"{ffn_name}.{el}" for el in ["mlp_norm", "linear2"]]
-                )
-            ),
-        )
+        remat_style = os.getenv('REMAT_STYLE', 'default')
+        if remat_style == 'none':
+            # new remat 3
+            return RematSpec(
+                prevent_cse=True,
+                policy=config_for_function(save_all_names_but_these).set(
+                    names_not_to_save=(["noname"]
+                    )
+                ),
+            )
+        else:
+            fused_qkv_name = stack_cfg.layer.self_attention.attention.input_linear.klass.__name__
+            ffn_name = stack_cfg.layer.feed_forward.klass.__name__
+            attention_name = stack_cfg.layer.self_attention.attention.klass.__name__
+            print(stack_cfg.layer.self_attention.attention)
+            return RematSpec(
+                prevent_cse=stack_cfg.klass is StackedTransformerLayer,
+                # If we are running inside a jax.lax.scan (Repeated/Pipelined transformers
+                # or Repeated Conformers) we can enable common subexpression elimination optimizations.
+                policy=config_for_function(jax.checkpoint_policies.save_any_names_but_these).set(
+                    names_not_to_save=(["all_gather","before_attention", "before_thunk", "input_to_qkv"] +
+                        [f"{attention_name}.{el}"
+                        for el in ['input_qkv_ag', 'o_proj']] +
+                        [f"{ffn_name}.{el}" for el in ["mlp_norm", "linear2"]]
+                    )
+                ),
+            )
     checkpoints = []
     if self_attention:
         attention_name = stack_cfg.layer.self_attention.attention.klass.__name__
