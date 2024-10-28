@@ -67,6 +67,7 @@ EVAL_EVERY_N_STEPS = 5_000
 # We typically use bfloat16 as the step dtype,
 # (but usually keep parameters and optimizer state in float32).
 STEP_DTYPE = jnp.float32 if os.environ.get('USE_FP32_COMPUTE') == '1' else jnp.bfloat16
+print(f"STEP_DTYPE: {STEP_DTYPE}")
 
 
 # The default mesh-axis names for LM training, from least to most communication intensive.
