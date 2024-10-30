@@ -873,6 +873,11 @@ class SpmdTrainer(Module):
         input_batch: Dict[str, Any],
     ) -> Tuple[TrainerState, NestedTensor]:
 
+        # # Shard and (possibly) dispatch the input batch.
+        # input_batch = utils.dispatch_input_batch(
+        #     input_batch, batch_axis_names=self.config.batch_axis_names
+        # )
+
         # split input batches
         # split_batches = [{} for i in range(self.num_accum)]
         # for k, v in input_batch.items():
@@ -915,9 +920,9 @@ class SpmdTrainer(Module):
                 outputs_buffer = microbatch_outputs
             else:
                 accumulate_metrics(outputs_buffer, microbatch_outputs)
-            gradient_buffer, _ = gradient_buffer
+            gradient_buffer, fwd_bwd_metrics = gradient_buffer
 
-        return self.opt_step(state, gradient_buffer, outputs_buffer, self.num_accum * self.config.learner.microbatches)
+        return self.opt_step(state, gradient_buffer, fwd_bwd_metrics, self.num_accum * self.config.learner.microbatches)
 
     def _pjit_train_step(self) -> jax.stages.Wrapped:
         self.one_neff = True
@@ -1079,10 +1084,6 @@ class SpmdTrainer(Module):
         gradient_buffer, output_buffer,
         total_accum,
     ) -> Tuple[TrainerState, NestedTensor]:
-        # Shard and (possibly) dispatch the input batch.
-        input_batch = utils.dispatch_input_batch(
-            input_batch, batch_axis_names=self.config.batch_axis_names
-        )
 
         new_prng_key, param_noise_key, forward_key, learner_key = jax.random.split(
             state.prng_key, 4
@@ -1105,8 +1106,11 @@ class SpmdTrainer(Module):
             state=state.learner,
             is_training=True,
             prng_key=learner_key,
-            inputs=dict(opt_params=opt_params, gradient_buffer=gradient_buffer, output_buffer=output_buffer, num_outer_accumulations=num_outer_accum),
+            inputs=dict(opt_params=opt_params, gradient_buffer=gradient_buffer, output_buffer=output_buffer, num_outer_accumulations=total_accum),
         )
+        
+        self._step_log("fwd_bwd_outputs %s", fwd_bwd_outputs)
+        self._step_log("learner_output_collection %s", learner_output_collection)
         forward_outputs: ForwardOutputs = fwd_bwd_outputs.forward_outputs
         updated_model_params = fwd_bwd_outputs.backward_outputs.updated_params
         updated_state = TrainerState(
@@ -1115,6 +1119,7 @@ class SpmdTrainer(Module):
             learner=learner_output_collection.state_updates,
         )
         # TODO(ruoming): only retrieve summaries when necessary.
+
         summaries = dict(
             model=forward_outputs.output_collection.summaries,
             learner=learner_output_collection.summaries,

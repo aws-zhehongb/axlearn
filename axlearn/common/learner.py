@@ -656,10 +656,11 @@ class AccumulatedLearner(Learner):
             gradients=gradient_buffer,
             state_updates=output_buffer.output_collection.state_updates,
         )
-        return ForwardBackwardOutputs(
+        fwd_bwd_outputs = ForwardBackwardOutputs(
             forward_outputs=output_buffer,
             backward_outputs=BackwardOutputs(updated_params=updated_params),
         )
+        return fwd_bwd_outputs
 
 class CompositeLearner(BaseLearner):
     """The composite learner supports different sub learners on different subset of parameters.
