@@ -914,8 +914,8 @@ class SpmdTrainer(Module):
             # gradient_buffer, microbatch_outputs = self.loss_step(state, split_batches[i], gradient_buffer)
             gradient_buffer, microbatch_outputs = self.loss_step(state, input_batch, gradient_buffer)
             self._step_log("After ")
-            self._step_log("gradient_buffer %s", gradient_buffer)
-            self._step_log("microbatch_outputs %s", microbatch_outputs)
+            # self._step_log("gradient_buffer %s", gradient_buffer)
+            # self._step_log("microbatch_outputs %s", microbatch_outputs)
             if outputs_buffer == None:
                 outputs_buffer = microbatch_outputs
             else:
@@ -1109,8 +1109,8 @@ class SpmdTrainer(Module):
             inputs=dict(opt_params=opt_params, gradient_buffer=gradient_buffer, output_buffer=output_buffer, num_outer_accumulations=total_accum),
         )
         
-        self._step_log("fwd_bwd_outputs %s", fwd_bwd_outputs)
-        self._step_log("learner_output_collection %s", learner_output_collection)
+        # self._step_log("fwd_bwd_outputs %s", fwd_bwd_outputs)
+        # self._step_log("learner_output_collection %s", learner_output_collection)
         forward_outputs: ForwardOutputs = fwd_bwd_outputs.forward_outputs
         updated_model_params = fwd_bwd_outputs.backward_outputs.updated_params
         updated_state = TrainerState(
