@@ -62,8 +62,8 @@ MAX_SEQUENCE_LENGTH = {
     Version.V3: 8192,
 }
 
-TRN_MODEL_AXIS_SIZE=64
-GRADIENT_ACCUMULATION_MICROBATCHES=4
+TRN_MODEL_AXIS_SIZE=8
+GRADIENT_ACCUMULATION_MICROBATCHES=1
 
 ROPE_THETA = {
     Version.V1: 5e5,
@@ -191,9 +191,9 @@ def get_trainer_kwargs(
     elif model_size == "70B":
         trainer_kwargs = dict(
             model_kwargs=dict(
-                num_layers=10,
-                hidden_dim=128 * 64,
-                num_heads=64,
+                num_layers=2,
+                hidden_dim=128 * 16,
+                num_heads=16,
                 # No GQA support in V1 models, so num_kv_heads is the same as num_heads.
                 num_kv_heads=None, #if version == Version.V1 else 8,
                 rope_theta=rope_theta,
@@ -202,7 +202,7 @@ def get_trainer_kwargs(
             learner_kwargs=dict(peak_lr=1.5e-5, weight_decay=6e-6),
             max_sequence_length=max_sequence_length,
             input_partition_type=DataPartitionType.DATA,
-            train_batch_size=int((jax.device_count()/TRN_MODEL_AXIS_SIZE)*GRADIENT_ACCUMULATION_MICROBATCHES),
+            train_batch_size=int((jax.device_count()/TRN_MODEL_AXIS_SIZE)*GRADIENT_ACCUMULATION_MICROBATCHES*4),
             max_step=max_step,
             mesh_shape=mesh_shape_from_axes(fsdp=-1),
             mesh_rules=(

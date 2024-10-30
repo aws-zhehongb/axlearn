@@ -555,6 +555,112 @@ class AccumulatedLearner(Learner):
             backward_outputs=BackwardOutputs(updated_params=updated_params),
         )
 
+    def forward_and_backward_only(
+        self, *, fn: ForwardFn, inputs: NestedTensor, opt_params: NestedOptParam, gradient_buffer
+    ) -> ForwardBackwardOutputs:
+
+        should_compute_gradients = self.should_update_with_optimizers(opt_params)
+        model_params = jax.tree_util.tree_map(lambda opt_param: opt_param.value, opt_params)
+
+        shape = jax.eval_shape(fn,
+            model_params=model_params,
+            inputs=inputs,
+        )
+        outputs_buffer = jax.tree_util.tree_map(
+            lambda sd: jnp.zeros(sd.shape, sd.dtype), shape)
+
+        def get_strategy_for_metric(pytree_path):
+            opMap = self.config.metrics_accumulation_key_ops
+            pytree_str = ""
+            for key in pytree_path:
+                pytree_str += str(key)
+            
+            if pytree_str in opMap:
+                print("dict index", opMap[pytree_str])
+                return opMap[pytree_str](self.config.microbatches)
+            return ArithmeticMeanStrategy(self.config.microbatches)
+
+        def MetricAggregationRule(pytree_path, x, y):
+            strategy = get_strategy_for_metric(pytree_path)
+            return strategy.aggregrate(x,y)
+
+        def MetricNormalizationRule(pytree_path, x):
+            strategy = get_strategy_for_metric(pytree_path)
+            return strategy.normalize(x)
+
+        # create evenly sized accumulation microbatches, keep sequence dimension as it is.
+        inputs = jax.tree_map(lambda x: x.reshape(self.config.microbatches,  -1, *x.shape[1:]), inputs)
+        inputs = jax.tree_util.tree_map(
+            lambda x: jax.lax.with_sharding_constraint(x, PartitionSpec(None, 'data', *([None for _ in range(len(x.shape) - 2)]))), inputs
+        )
+
+        # def _copy_zero(model_tree):
+        #     return jax.tree_map(lambda x: jnp.full_like(x, 0, dtype=jnp.bfloat16), model_tree)
+
+        def run_microbatch(gradient_buffer, microbatch):
+            gradient_buffer, forward_outputs_buffer = gradient_buffer
+            forward_outputs, microbatch_gradients = _value_and_grad(
+                fn,
+                model_params=model_params,
+                inputs=microbatch,
+                should_compute_gradients=should_compute_gradients,
+            )
+            microbatch_gradients = jax.tree_map(lambda x: x.astype(jnp.bfloat16), microbatch_gradients)
+
+            # accumulate gradients
+            gradient_buffer = jax.tree_map(lambda x, y: x + y, microbatch_gradients, gradient_buffer)
+            forward_outputs_buffer = jax.tree_util.tree_map_with_path(MetricAggregationRule, forward_outputs, forward_outputs_buffer)
+            return (gradient_buffer, forward_outputs_buffer), None
+
+        # gradient_buffer = _copy_zero(opt_params)
+        (gradient_buffer, output_buffer), _ = jax.lax.scan(run_microbatch, (gradient_buffer, outputs_buffer), inputs)
+
+        # Average gradients and metrics
+        # gradient_buffer = jax.tree_map(lambda x: x / self.config.microbatches, gradient_buffer)
+        # output_buffer = jax.tree_util.tree_map_with_path(MetricNormalizationRule, output_buffer)
+
+        # def accumulate_grad(microbatch_grads, grad_buffer):
+        #     if grad_buffer == None:
+        #         grad_buffer = microbatch_grads
+        #     else :
+        #         grad_buffer = jax.tree_map(lambda x, y: x + y, microbatch_grads, grad_buffer)
+        #     return grad_buffer
+
+        # updated_params = self.update(
+        #     model_params=opt_params,
+        #     gradients=gradient_buffer,
+        #     state_updates=output_buffer.output_collection.state_updates,
+        # )
+        # return ForwardBackwardOutputs(
+        #     forward_outputs=output_buffer,
+        #     backward_outputs=BackwardOutputs(updated_params=updated_params),
+        # )
+        return gradient_buffer, output_buffer
+
+    def opt_step_only(
+        self, *, opt_params: NestedOptParam, gradient_buffer, output_buffer, num_outer_accumulations
+    ) -> ForwardBackwardOutputs:
+
+        def mean_metrics(metrics):
+            def maybe_mean(x):
+                if x.size > 0:
+                    x / num_outer_accumulations
+                return x
+            metrics = jax.tree_map(maybe_mean, metrics)
+            return metrics
+
+        output_buffer = mean_metrics(output_buffer)
+        gradient_buffer = mean_metrics(gradient_buffer)
+        updated_params = self.update(
+            model_params=opt_params,
+            gradients=gradient_buffer,
+            state_updates=output_buffer.output_collection.state_updates,
+        )
+        return ForwardBackwardOutputs(
+            forward_outputs=output_buffer,
+            backward_outputs=BackwardOutputs(updated_params=updated_params),
+        )
+
 class CompositeLearner(BaseLearner):
     """The composite learner supports different sub learners on different subset of parameters.
 

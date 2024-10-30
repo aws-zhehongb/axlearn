@@ -842,13 +842,17 @@ class SpmdTrainer(Module):
             evaler_summaries[evaler_name] = summaries
         return evaler_summaries
 
-    def _pjit_train_step(self) -> jax.stages.Wrapped:
-        return pjit(
-            self._train_step,
+    def _pjit_accum_step(self):
+        self.loss_step = pjit(
+            self._loss_step,
             in_shardings=(
                 self._trainer_state_partition_specs,
                 self._train_step_input_partition_specs(),
-            ),
+                self._trainer_state_partition_specs.model
+            )
+        )
+        self.opt_step = pjit(
+            self._opt_step,
             out_shardings=(
                 self._trainer_state_partition_specs,
                 dict(
@@ -859,6 +863,76 @@ class SpmdTrainer(Module):
             ),
             donate_argnums=(0,),  # donate the state
         )
+        self.num_accum = 4
+        return self.train_step_accum
+        
+    def train_step_accum(
+        self,
+        state: TrainerState,
+        input_batch: Dict[str, Any],
+    ) -> Tuple[TrainerState, NestedTensor]:
+
+        # split input batches
+        split_batches = [{} for i in range(self.num_accum)]
+        for k, v in input_batch.items():
+            v_list = jnp.split(v, self.num_accum, axis=0)
+            for i in range(self.num_accum):
+                split_batches[i][k] = v_list[i]
+
+        def _copy_zero(model_tree):
+            return jax.tree_map(lambda x: jnp.full_like(x, 0, dtype=jnp.bfloat16), model_tree)
+
+        gradient_buffer = _copy_zero(state.model)
+        # shape = jax.eval_shape(self._train_step,
+        #     self.state,
+        #     inputs=split_batches[i]
+        # )
+
+        # outputs_buffer = jax.tree_util.tree_map(
+        #     lambda sd: jnp.zeros(sd.shape, sd.dtype), shape)
+
+        def accumulate_metrics(microbatch, buffer):
+            def maybe_add(x, y):
+                import numpy as np
+                if x.size > 0 and y.size > 0:
+                    jax.debug.print("x {}, y {}", x, y)
+                    print("x {}, y {}", x, y)
+                    return jnp.add(x, y)
+                return y
+
+        outputs_buffer = None
+        for i in range(self.num_accum):
+            self._step_log("Before ")
+            gradient_buffer, microbatch_outputs = self.loss_step(state, split_batches[i], gradient_buffer)
+            self._step_log("After ")
+            if outputs_buffer == None:
+                outputs_buffer = microbatch_outputs
+            else:
+                accumulate_metrics(outputs_buffer, microbatch_outputs)
+
+        return self.opt_step(gradient_buffer, outputs_buffer, self.num_accum * self.learner_cfg.microbatches)
+
+    def _pjit_train_step(self) -> jax.stages.Wrapped:
+        self.one_neff = False
+        if not self.one_neff:
+            return pjit(
+                self._train_step,
+                in_shardings=(
+                    self._trainer_state_partition_specs,
+                    self._train_step_input_partition_specs(),
+                ),
+                out_shardings=(
+                    self._trainer_state_partition_specs,
+                    dict(
+                        summaries=None,
+                        loss=None,
+                        aux=None,
+                    ),
+                ),
+                donate_argnums=(0,),  # donate the state
+            )
+        else:
+            return self._pjit_accum_step()
 
     def compile_train_step(self) -> jax.stages.Compiled:
         with self.mesh():
@@ -923,6 +997,108 @@ class SpmdTrainer(Module):
             is_training=True,
             prng_key=learner_key,
             inputs=dict(fn=_forward, opt_params=opt_params, inputs=input_batch),
+        )
+        forward_outputs: ForwardOutputs = fwd_bwd_outputs.forward_outputs
+        updated_model_params = fwd_bwd_outputs.backward_outputs.updated_params
+        updated_state = TrainerState(
+            prng_key=new_prng_key,
+            model=updated_model_params,
+            learner=learner_output_collection.state_updates,
+        )
+        # TODO(ruoming): only retrieve summaries when necessary.
+        summaries = dict(
+            model=forward_outputs.output_collection.summaries,
+            learner=learner_output_collection.summaries,
+        )
+        return updated_state, dict(
+            summaries=summaries,
+            loss=forward_outputs.loss,
+            aux=forward_outputs.aux,
+        )
+
+    def _loss_step(
+        self,
+        state: TrainerState,
+        input_batch: Dict[str, Any],
+        gradient_buffer,
+    ) -> Tuple[TrainerState, NestedTensor]:
+        # Shard and (possibly) dispatch the input batch.
+        input_batch = utils.dispatch_input_batch(
+            input_batch, batch_axis_names=self.config.batch_axis_names
+        )
+
+        new_prng_key, param_noise_key, forward_key, learner_key = jax.random.split(
+            state.prng_key, 4
+        )
+
+        def train_cast(in_tree):
+            return utils.cast_floats(in_tree, to_dtype=self.config.train_dtype)
+
+        # A nested tree of booleans.
+        should_compute_gradients = self.learner.should_update_with_optimizers(state.model)
+        for path, value in flatten_items(should_compute_gradients):
+            if not value:
+                self.vlog(1, "Skipping gradients on %s", path)
+
+        def _forward(*, inputs: NestedTensor, model_params: NestedTensor) -> ForwardOutputs:
+            params = train_cast(model_params)
+            params = self.model.apply_parameter_noise_recursively(param_noise_key, params)
+            model_output_collection = new_output_collection()
+            with child_context(
+                "model",
+                module=self.model,
+                state=params,
+                prng_key=forward_key,
+                output_collection=model_output_collection,
+            ):
+                loss, aux = self.model(input_batch=train_cast(inputs))
+            return ForwardOutputs(loss=loss, aux=aux, output_collection=model_output_collection)
+
+        # `grads` are computed for `model_parameters_grad`.
+        opt_params = self._opt_params(state.model)
+        gradient_buffer, output_buffer = F(
+            self.learner,
+            method="forward_and_backward_only",
+            state=state.learner,
+            is_training=True,
+            prng_key=learner_key,
+            inputs=dict(fn=_forward, opt_params=opt_params, inputs=input_batch, gradient_buffer=gradient_buffer),
+        )
+        return gradient_buffer, output_buffer
+
+    def _opt_step(
+        self,
+        state: TrainerState,
+        gradient_buffer, output_buffer,
+        total_accum,
+    ) -> Tuple[TrainerState, NestedTensor]:
+        # Shard and (possibly) dispatch the input batch.
+        input_batch = utils.dispatch_input_batch(
+            input_batch, batch_axis_names=self.config.batch_axis_names
+        )
+
+        new_prng_key, param_noise_key, forward_key, learner_key = jax.random.split(
+            state.prng_key, 4
+        )
+
+        def train_cast(in_tree):
+            return utils.cast_floats(in_tree, to_dtype=self.config.train_dtype)
+
+        # A nested tree of booleans.
+        should_compute_gradients = self.learner.should_update_with_optimizers(state.model)
+        for path, value in flatten_items(should_compute_gradients):
+            if not value:
+                self.vlog(1, "Skipping gradients on %s", path)
+
+        # `grads` are computed for `model_parameters_grad`.
+        opt_params = self._opt_params(state.model)
+        fwd_bwd_outputs, learner_output_collection = F(
+            self.learner,
+            method="opt_step_only",
+            state=state.learner,
+            is_training=True,
+            prng_key=learner_key,
+            inputs=dict(opt_params=opt_params, gradient_buffer=gradient_buffer, output_buffer=output_buffer, num_outer_accumulations=num_outer_accum),
         )
         forward_outputs: ForwardOutputs = fwd_bwd_outputs.forward_outputs
         updated_model_params = fwd_bwd_outputs.backward_outputs.updated_params
