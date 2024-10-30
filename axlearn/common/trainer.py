@@ -419,6 +419,7 @@ class SpmdTrainer(Module):
             force_run_eval_sets_at_max_step = self._should_force_run_evals(
                 return_evaler_summaries=return_evaler_summaries, evalers=cfg.evalers
             )
+            self._step_log("config is %s", self.config)
 
             # Prepare training.
             if not self._prepare_training(prng_key):
@@ -873,11 +874,12 @@ class SpmdTrainer(Module):
     ) -> Tuple[TrainerState, NestedTensor]:
 
         # split input batches
-        split_batches = [{} for i in range(self.num_accum)]
-        for k, v in input_batch.items():
-            v_list = jnp.split(v, self.num_accum, axis=0)
-            for i in range(self.num_accum):
-                split_batches[i][k] = v_list[i]
+        # split_batches = [{} for i in range(self.num_accum)]
+        # for k, v in input_batch.items():
+        #     v_list = jnp.split(v, self.num_accum, axis=0)
+        #     for i in range(self.num_accum):
+        #         split_batches[i][k] = v_list[i]
+        #         # split_batches[i].partition_spe
 
         def _copy_zero(model_tree):
             return jax.tree_map(lambda x: jnp.full_like(x, 0, dtype=jnp.bfloat16), model_tree)
@@ -899,21 +901,26 @@ class SpmdTrainer(Module):
                     print("x {}, y {}", x, y)
                     return jnp.add(x, y)
                 return y
+        self._step_log("printing self %s", self)
 
         outputs_buffer = None
         for i in range(self.num_accum):
             self._step_log("Before ")
-            gradient_buffer, microbatch_outputs = self.loss_step(state, split_batches[i], gradient_buffer)
+            # gradient_buffer, microbatch_outputs = self.loss_step(state, split_batches[i], gradient_buffer)
+            gradient_buffer, microbatch_outputs = self.loss_step(state, input_batch, gradient_buffer)
             self._step_log("After ")
+            self._step_log("gradient_buffer %s", gradient_buffer)
+            self._step_log("microbatch_outputs %s", microbatch_outputs)
             if outputs_buffer == None:
                 outputs_buffer = microbatch_outputs
             else:
                 accumulate_metrics(outputs_buffer, microbatch_outputs)
+            gradient_buffer, _ = gradient_buffer
 
-        return self.opt_step(gradient_buffer, outputs_buffer, self.num_accum * self.learner_cfg.microbatches)
+        return self.opt_step(state, gradient_buffer, outputs_buffer, self.num_accum * self.config.learner.microbatches)
 
     def _pjit_train_step(self) -> jax.stages.Wrapped:
-        self.one_neff = False
+        self.one_neff = True
         if not self.one_neff:
             return pjit(
                 self._train_step,
