@@ -641,16 +641,16 @@ class AccumulatedLearner(Learner):
         self, *, opt_params: NestedOptParam, gradient_buffer, output_buffer, num_outer_accumulations
     ) -> ForwardBackwardOutputs:
 
-        def mean_metrics(metrics):
-            def maybe_mean(x):
-                if x.size > 0:
-                    x / num_outer_accumulations
-                return x
-            metrics = jax.tree_map(maybe_mean, metrics)
-            return metrics
+        # def mean_metrics(metrics):
+        #     def maybe_mean(x):
+        #         if x.size > 0:
+        #             x / num_outer_accumulations
+        #         return x
+        #     metrics = jax.tree_map(maybe_mean, metrics)
+        #     return metrics
 
-        output_buffer = mean_metrics(output_buffer)
-        gradient_buffer = mean_metrics(gradient_buffer)
+        # output_buffer = mean_metrics(output_buffer)
+        # gradient_buffer = mean_metrics(gradient_buffer)
         updated_params = self.update(
             model_params=opt_params,
             gradients=gradient_buffer,

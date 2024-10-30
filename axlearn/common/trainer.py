@@ -156,6 +156,8 @@ class SpmdTrainer(Module):
         # Options: FULL (default), DATA, REPLICATED
         input_partition_type: Required[DataPartitionType] = DataPartitionType.DATA
 
+        num_accum: Optional[int] = 1
+
     def __init__(
         self,
         cfg: Config,
@@ -864,7 +866,6 @@ class SpmdTrainer(Module):
             ),
             donate_argnums=(0,),  # donate the state
         )
-        self.num_accum = 4
         return self.train_step_accum
         
     def train_step_accum(
@@ -873,60 +874,44 @@ class SpmdTrainer(Module):
         input_batch: Dict[str, Any],
     ) -> Tuple[TrainerState, NestedTensor]:
 
-        # # Shard and (possibly) dispatch the input batch.
-        # input_batch = utils.dispatch_input_batch(
-        #     input_batch, batch_axis_names=self.config.batch_axis_names
-        # )
 
         # split input batches
-        # split_batches = [{} for i in range(self.num_accum)]
-        # for k, v in input_batch.items():
-        #     v_list = jnp.split(v, self.num_accum, axis=0)
-        #     for i in range(self.num_accum):
-        #         split_batches[i][k] = v_list[i]
-        #         # split_batches[i].partition_spe
+        split_batches = [{} for i in range(self.config.num_accum)]
+        for k, v in input_batch.items():
+            v_list = jnp.split(v, self.config.num_accum, axis=0)
+            for i in range(self.config.num_accum):
+                split_batches[i][k] = v_list[i]
 
         def _copy_zero(model_tree):
             return jax.tree_map(lambda x: jnp.full_like(x, 0, dtype=jnp.bfloat16), model_tree)
-
         gradient_buffer = _copy_zero(state.model)
-        # shape = jax.eval_shape(self._train_step,
-        #     self.state,
-        #     inputs=split_batches[i]
-        # )
-
-        # outputs_buffer = jax.tree_util.tree_map(
-        #     lambda sd: jnp.zeros(sd.shape, sd.dtype), shape)
 
         def accumulate_metrics(microbatch, buffer):
             def maybe_add(x, y):
                 import numpy as np
                 if x.size > 0 and y.size > 0:
-                    jax.debug.print("x {}, y {}", x, y)
-                    print("x {}, y {}", x, y)
                     return jnp.add(x, y)
                 return y
-        self._step_log("printing self %s", self)
+            return jax.tree_map(maybe_add, microbatch, buffer)
 
         outputs_buffer = None
-        for i in range(self.num_accum):
-            self._step_log("Before ")
-            # gradient_buffer, microbatch_outputs = self.loss_step(state, split_batches[i], gradient_buffer)
-            gradient_buffer, microbatch_outputs = self.loss_step(state, input_batch, gradient_buffer)
-            self._step_log("After ")
-            # self._step_log("gradient_buffer %s", gradient_buffer)
-            # self._step_log("microbatch_outputs %s", microbatch_outputs)
-            if outputs_buffer == None:
-                outputs_buffer = microbatch_outputs
-            else:
-                accumulate_metrics(outputs_buffer, microbatch_outputs)
+        for i in range(self.config.num_accum):
+            # Shard and (possibly) dispatch the input batch.
+            input_microbatch = utils.dispatch_input_batch(
+                split_batches[i], batch_axis_names=self.config.batch_axis_names
+            )
+            gradient_buffer, microbatch_outputs = self.loss_step(state, input_microbatch, gradient_buffer)
             gradient_buffer, fwd_bwd_metrics = gradient_buffer
+            self._step_log("loss of loop step %s", fwd_bwd_metrics.loss)
+            if outputs_buffer == None:
+                outputs_buffer = fwd_bwd_metrics
+            else:
+                outputs_buffer = accumulate_metrics(outputs_buffer, fwd_bwd_metrics)
 
-        return self.opt_step(state, gradient_buffer, fwd_bwd_metrics, self.num_accum * self.config.learner.microbatches)
+        return self.opt_step(state, gradient_buffer, outputs_buffer, self.config.num_accum * self.config.learner.microbatches)
 
     def _pjit_train_step(self) -> jax.stages.Wrapped:
-        self.one_neff = True
-        if not self.one_neff:
+        if self.config.num_accum == 1:
             return pjit(
                 self._train_step,
                 in_shardings=(
@@ -1097,6 +1082,9 @@ class SpmdTrainer(Module):
         for path, value in flatten_items(should_compute_gradients):
             if not value:
                 self.vlog(1, "Skipping gradients on %s", path)
+
+        gradient_buffer = jax.tree_map(lambda x: x / total_accum, gradient_buffer)
+        output_buffer = jax.tree_map(lambda x: x / total_accum, output_buffer)
 
         # `grads` are computed for `model_parameters_grad`.
         opt_params = self._opt_params(state.model)

@@ -58,12 +58,13 @@ VOCAB_SIZE = {
 # Mapping from Fuji versions to maximum sequence lengths.
 MAX_SEQUENCE_LENGTH = {
     Version.V1: 8192,
-    Version.V2: 4096,
+    Version.V2: 1024,
     Version.V3: 8192,
 }
 
 TRN_MODEL_AXIS_SIZE=16
 GRADIENT_ACCUMULATION_MICROBATCHES=4
+GRADIENT_ACCUMULATION_OUTER=4
 
 ROPE_THETA = {
     Version.V1: 5e5,
@@ -202,9 +203,10 @@ def get_trainer_kwargs(
             learner_kwargs=dict(peak_lr=1.5e-5, weight_decay=6e-6),
             max_sequence_length=max_sequence_length,
             input_partition_type=DataPartitionType.DATA,
-            train_batch_size=int((jax.device_count()/TRN_MODEL_AXIS_SIZE)*GRADIENT_ACCUMULATION_MICROBATCHES*4),
+            train_batch_size=int((jax.device_count()/TRN_MODEL_AXIS_SIZE)*GRADIENT_ACCUMULATION_MICROBATCHES*GRADIENT_ACCUMULATION_OUTER),
             max_step=max_step,
             mesh_shape=mesh_shape_from_axes(fsdp=-1),
+            num_accum=GRADIENT_ACCUMULATION_OUTER,
             mesh_rules=(
                 # tpu-v5e. step time: TBD.
                 ("tpu-v5litepod-256", mesh_shape_from_axes(data=-1, fsdp=256)),
