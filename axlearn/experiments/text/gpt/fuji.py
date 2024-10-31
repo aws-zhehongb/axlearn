@@ -58,7 +58,7 @@ VOCAB_SIZE = {
 # Mapping from Fuji versions to maximum sequence lengths.
 MAX_SEQUENCE_LENGTH = {
     Version.V1: 8192,
-    Version.V2: 1024,
+    Version.V2: 4096,
     Version.V3: 8192,
 }
 
@@ -193,8 +193,8 @@ def get_trainer_kwargs(
         trainer_kwargs = dict(
             model_kwargs=dict(
                 num_layers=2,
-                hidden_dim=128 * 16,
-                num_heads=16,
+                hidden_dim=128 * 64,
+                num_heads=64,
                 # No GQA support in V1 models, so num_kv_heads is the same as num_heads.
                 num_kv_heads=None, #if version == Version.V1 else 8,
                 rope_theta=rope_theta,

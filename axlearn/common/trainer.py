@@ -908,7 +908,8 @@ class SpmdTrainer(Module):
             else:
                 outputs_buffer = accumulate_metrics(outputs_buffer, fwd_bwd_metrics)
 
-        return self.opt_step(state, gradient_buffer, outputs_buffer, self.config.num_accum * self.config.learner.microbatches)
+        self._step_log("gradient_buffer %s", gradient_buffer)
+        return self.opt_step(state=state, gradient_buffer=gradient_buffer, output_buffer=outputs_buffer, total_accum=self.config.num_accum * self.config.learner.microbatches)
 
     def _pjit_train_step(self) -> jax.stages.Wrapped:
         if self.config.num_accum == 1:

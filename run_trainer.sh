@@ -1,19 +1,23 @@
 #!/usr/bin/env bash
-sudo dpkg -i /home/apoorvgu/axlearn/drop2_final/aws-neuronx-collectives-2.x.18916.0-41121280a.deb
-sudo dpkg -i /home/apoorvgu/axlearn/drop2_final/aws-neuronx-runtime-lib-2.x.17742.0-83ba134d4.deb
-PY_VENV_PATH="/home/apoorvgu/axlearn_pvenv/bin/activate"
+sudo dpkg -i /shared/huilgolr/env_builders/tot-binaries/aws-neuronx-runtime-lib-2.x.17887.0-62bff0cbe
+sudo dpkg -i /shared/huilgolr/env_builders/tot-binaries/aws-neuronx-collectives-2.x.19099.0-8a7991b2a.deb
+sudo dpkg -i /shared/huilgolr/env_builders/tot-binaries/aws-neuronx-dkms_2.x.3784.0_amd64
+sudo dpkg -i /shared/huilgolr/env_builders/tot-binaries/aws-neuronx-tools-2.0.8969.0.deb
+PY_VENV_PATH="/shared/apoorvgu/py310/bin/activate"
 source ${PY_VENV_PATH}
+
+which python
 
 cd /axlearn
 
-ARTIFACTS_PATH="/home/apoorvgu/artifacts"
+ARTIFACTS_PATH="/shared/apoorvgu/artifacts"
 TIMESTAMP=$(date +"%y%m%d%H%M%S")
 TEST_ARTIFACTS_PATH="${ARTIFACTS_PATH}/${TIMESTAMP}"
 mkdir -p "$TEST_ARTIFACTS_PATH"
 
 NEURON_DUMP_PATH=${TEST_ARTIFACTS_PATH}/neuron_dump
 HLO_DUMP_PATH=${TEST_ARTIFACTS_PATH}/hlo_dump
-export XLA_FLAGS="--xla_dump_hlo_as_text --xla_disable_hlo_passes=aws_neuron_flip_all_gather_dot --xla_dump_hlo_as_proto --xla_dump_to=${HLO_DUMP_PATH} --xla_dump_hlo_pass_re='.*'"
+export XLA_FLAGS="--xla_dump_hlo_as_text --xla_disable_hlo_passes=aws_neuron_flip_all_gather_dot --xla_dump_hlo_as_proto --xla_dump_to=${HLO_DUMP_PATH} --xla_dump_hlo_pass_re='.*'" # --xla_force_host_platform_device_count=16"
 
 
 # Neuron compiler flags
@@ -35,6 +39,7 @@ export NEURON_CC_FLAGS="${NEURON_CC_FLAGS} --dump=${NEURON_DUMP_PATH}"
 export NEURON_WHILE_LOOP_UNROLL=1
 export NEURON_RUN_TRIVIAL_COMPUTATION_ON_CPU=1
 export TRN2=1
+export NEURON_FSDP=1
 
 # Neuron runtime flags
 export NEURON_RT_ASYNC_EXEC_MAX_INFLIGHT_REQUESTS=1
@@ -42,6 +47,8 @@ export NEURON_RT_IO_RING_CACHE_SIZE=0
 export NEURON_RT_ENABLE_MEMORY_METRICS=0
 export OFI_NCCL_PROTOCOL=RDMA
 export OFI_NCCL_MR_CACHE_DISABLE=1
+
+# export JAX_PLATFORMS=cpu
 
 OUTPUT_DIR="${TEST_ARTIFACTS_PATH}/axlearn_out"
 mkdir -p ${OUTPUT_DIR}
