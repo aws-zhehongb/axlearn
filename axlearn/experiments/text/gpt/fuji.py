@@ -200,7 +200,7 @@ def get_trainer_kwargs(
                 hidden_dim=128 * 64,
                 num_heads=64,
                 # No GQA support in V1 models, so num_kv_heads is the same as num_heads.
-                num_kv_heads=None, #if version == Version.V1 else 8,
+                num_kv_heads=None if version == Version.V1 else 8,
                 rope_theta=rope_theta,
                 flash_attention=flash_attention,
             ),
@@ -221,7 +221,11 @@ def get_trainer_kwargs(
                 ),
                 (   
                     "trn2",
-                    mesh_shape_from_axes(data=-1, model=TRN_MODEL_AXIS_SIZE),
+                    mesh_shape_from_axes(
+                            data=-1,
+                            model=(min(TRN_MODEL_AXIS_SIZE, 8) if version != Version.V1 else TRN_MODEL_AXIS_SIZE),
+                            seq=(TRN_MODEL_AXIS_SIZE//8 if version != Version.V1 else 1)
+                        ),
                 ),
             ),
             eval_batch_size=int(jax.device_count()/TRN_MODEL_AXIS_SIZE),

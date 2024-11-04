@@ -1147,10 +1147,16 @@ class FusedGroupedQKVLinear(BaseQKVLinear):
         if key is not None or value is not None:
             raise ValueError("Key and value should be both None.")
         cfg = self.config
+        query = with_sharding_constraint(query, PartitionSpec('data', None, None))
+
         proj = self.qkv_proj(query)
+        proj = with_sharding_constraint(proj, PartitionSpec('data', None, 'model', None))
         q_proj, k_proj, v_proj = jnp.split(
             proj, [cfg.num_heads, cfg.num_heads + cfg.num_kv_heads], axis=-2
         )
+        q_proj = with_sharding_constraint(q_proj, PartitionSpec('data', None, 'model', None))
+        k_proj = with_sharding_constraint(k_proj, PartitionSpec('data', None, 'model', None))
+        v_proj = with_sharding_constraint(v_proj, PartitionSpec('data', None, 'model', None))
         return self.Output(query=q_proj, key=k_proj, value=v_proj)
 
 
@@ -2389,9 +2395,9 @@ class TransformerAttentionLayer(BaseLayer):
             else:
                 raise ValueError(f"Unrecognized mode {mode}.")
             return atten_state, atten_output
-
+        full_model = ("model", "gqa")
         if cfg.structure == "prenorm":
-            target = with_sharding_constraint(target, PartitionSpec('data','model',None))
+            target = with_sharding_constraint(target, PartitionSpec('data',full_model,None))
             skip_input = target  # pre-norm: where normalization happens within the residual part.
             skip_input = self._remat_name(skip_input, 'residual_skip')
             norm_target = self.norm(target)
@@ -2399,7 +2405,7 @@ class TransformerAttentionLayer(BaseLayer):
             norm_target = checkpoint_name(norm_target, name='before_thunk')
             #norm_target = self._remat_name(norm_target, 'attention_norm')
             atten_state, atten_output = attention_thunk(norm_target)
-            atten_output = with_sharding_constraint(atten_output, PartitionSpec('data','model',None))
+            atten_output = with_sharding_constraint(atten_output, PartitionSpec('data',full_model,None))
             data = skip_input + self.stochastic_depth(self.dropout(atten_output.data))
             data = self._remat_name(data, 'residual_add')
         elif cfg.structure == "postnorm":
@@ -2710,8 +2716,9 @@ class TransformerFeedForwardLayer(BaseLayer):
         remat_pt1 = "activation"
         remat_pt2 = "linear2"
         inputs = self._remat_name(inputs, 'residual_input')
+        full_model = ("model", "gqa")
         if cfg.structure == "prenorm":
-            x = with_sharding_constraint(inputs, PartitionSpec('data','model',None))
+            x = with_sharding_constraint(inputs, PartitionSpec('data',full_model,None))
             x = self.norm(inputs)
             x = self._remat_name(x, 'mlp_norm')
             x = with_sharding_constraint(x, PartitionSpec('data',None,None))
@@ -2720,7 +2727,7 @@ class TransformerFeedForwardLayer(BaseLayer):
             x = self.dropout1(x)
             x = _linear2(x)
             x = self._remat_name(x, remat_pt2)
-            x = with_sharding_constraint(x, PartitionSpec('data','model',None))
+            x = with_sharding_constraint(x, PartitionSpec('data',full_model,None))
             x = self.dropout2(x)
             x = self.stochastic_depth(x)
             if cfg.residual_weight != 1:
@@ -3230,22 +3237,23 @@ def set_double_shard_weights_config(
         tp_axis_names: Axis name(s) over which we shard tensor-parallel tensors.
         seq_axis_names: Axis name(s) over which we shard sequence-parallel tensors.
     """
-
+    full_model = ('model', 'gqa')
+    attention_batch_axis_names = ("data","fsdp","gqa")
     # pytype: disable=attribute-error
     def set_attn_partition_specs(attn_layer: MultiheadAttention.Config):
         # Shard weights.
         input_linear_cfg = attn_layer.input_linear
         if hasattr(input_linear_cfg, "input_linear"):
             input_linear_cfg = input_linear_cfg.input_linear
-        input_linear_cfg.layer.param_partition_spec = (fsdp_axis_names, tp_axis_names, None)
-        attn_layer.output_linear.param_partition_spec = (fsdp_axis_names, tp_axis_names, None)
+        input_linear_cfg.layer.param_partition_spec = (attention_batch_axis_names, tp_axis_names, None)
+        attn_layer.output_linear.param_partition_spec = (attention_batch_axis_names, tp_axis_names, None)
 
     def set_ffn_partition_specs(ff_layer: TransformerFeedForwardLayer.Config):
         # Shard weights.
-        ff_layer.linear1.param_partition_spec = (fsdp_axis_names, tp_axis_names)
-        ff_layer.linear2.param_partition_spec = (tp_axis_names, fsdp_axis_names)
+        ff_layer.linear1.param_partition_spec = (fsdp_axis_names, full_model)
+        ff_layer.linear2.param_partition_spec = (full_model, fsdp_axis_names)
         # Encourage the right activation sharding.
-        ff_layer.linear1.output_partition_spec = (batch_axis_names, None, tp_axis_names)
+        ff_layer.linear1.output_partition_spec = (batch_axis_names, None, full_model)
         ff_layer.linear2.output_partition_spec = (batch_axis_names, None, None)
 
     if not isinstance(cfg, Sequence):

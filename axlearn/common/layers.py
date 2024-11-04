@@ -325,17 +325,18 @@ class RMSNorm(BaseNormalizationLayer):
     
     def forward(self, x: Tensor, *, paddings: Optional[Tensor] = None) -> Tensor:
         del paddings  # paddings do not affect LayerNorm results
+        full_model = ('model', 'gqa')
         cfg = self.config
         x_dtype = x.dtype
         if cfg.forward_dtype is not None:
             x = x.astype(cfg.forward_dtype)
-        x = with_sharding_constraint(x, PartitionSpec('data','model', None))
+        x = with_sharding_constraint(x, PartitionSpec('data',full_model, None))
         moment2 = (x * x).mean(axis=-1, keepdims=True)
         x = x * jax.lax.rsqrt(moment2 + cfg.eps)
         x = x.astype(x_dtype)
-        x = with_sharding_constraint(x, PartitionSpec('data','model', None))
+        x = with_sharding_constraint(x, PartitionSpec('data',full_model, None))
         x = x * self.parameters["scale"]
-        x = with_sharding_constraint(x, PartitionSpec('data','model', None))
+        x = with_sharding_constraint(x, PartitionSpec('data',full_model, None))
         return x
 
 
@@ -1258,9 +1259,10 @@ class Embedding(BaseLayer):
         )
 
     def forward(self, x: Tensor) -> Tensor:
+        full_model = ("model", "gqa")
         x = with_sharding_constraint(x, PartitionSpec('data', None))
         emb = self.parameters["weight"]
-        emb = with_sharding_constraint(emb, PartitionSpec('model', None))
+        emb = with_sharding_constraint(emb, PartitionSpec(full_model, None))
         activation = emb[x]
         activation = with_sharding_constraint(activation, PartitionSpec('data', None, None))
         return activation

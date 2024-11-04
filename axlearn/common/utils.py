@@ -406,8 +406,19 @@ def as_numpy_array(x: Any):
         return jax.tree_util.tree_map(as_numpy_array, x)
     raise NotImplementedError(f"{type(x)}: {x}")
 
-
+import inspect
 def with_sharding_constraint(x, shardings):
+    # Print the caller's frame information
+    frame = inspect.currentframe()
+    caller_frame = frame.f_back  # Get the frame of the caller
+    #logging.info("Caller frame details:")
+    #logging.info(f"Function name: {caller_frame.f_code.co_name}")
+    #logging.info(f"Line number: {caller_frame.f_lineno}")
+    #logging.info("Local variables in caller's frame:", caller_frame.f_locals)
+    #logging.info("\nArguments passed to with_sharding_constraint:")
+    #logging.info("x:", x)
+    #logging.info("shardings:", shardings)
+
     mesh = jax.experimental.maps.thread_resources.env.physical_mesh  # type: ignore
     if mesh.empty or mesh.size == 1:
         return x
