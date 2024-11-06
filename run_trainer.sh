@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-sudo dpkg -i /shared/huilgolr/env_builders/tot-binaries/aws-neuronx-runtime-lib-2.x.17887.0-62bff0cbe
-sudo dpkg -i /shared/huilgolr/env_builders/tot-binaries/aws-neuronx-collectives-2.x.19099.0-8a7991b2a.deb
-sudo dpkg -i /shared/huilgolr/env_builders/tot-binaries/aws-neuronx-dkms_2.x.3784.0_amd64
-sudo dpkg -i /shared/huilgolr/env_builders/tot-binaries/aws-neuronx-tools-2.0.8969.0.deb
+sudo dpkg -i /home/apoorvgu/aws-neuronx-collectives-2.x.x.x-a311abe53.deb
+sudo dpkg -i /home/apoorvgu/aws-neuronx-runtime-lib-2.x.x.x-a7a599f60.deb
+sudo dpkg -i /home/apoorvgu/aws-neuronx-dkms_2.x.3951.0_amd64.deb
+# sudo dpkg -i /shared/huilgolr/env_builders/tot-binaries/aws-neuronx-tools-2.0.8969.0.deb
 PY_VENV_PATH="/shared/apoorvgu/py310/bin/activate"
 source ${PY_VENV_PATH}
 

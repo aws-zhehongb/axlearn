@@ -866,6 +866,7 @@ class SpmdTrainer(Module):
             ),
             donate_argnums=(0,),  # donate the state
         )
+        self.gradient_buffer = None
         return self.train_step_accum
         
     def train_step_accum(
@@ -884,7 +885,8 @@ class SpmdTrainer(Module):
 
         def _copy_zero(model_tree):
             return jax.tree_map(lambda x: jnp.full_like(x, 0, dtype=jnp.bfloat16), model_tree)
-        gradient_buffer = _copy_zero(state.model)
+        if(self.gradient_buffer == None):
+            gradient_buffer = _copy_zero(state.model)
 
         def accumulate_metrics(microbatch, buffer):
             def maybe_add(x, y):
@@ -902,13 +904,13 @@ class SpmdTrainer(Module):
             )
             gradient_buffer, microbatch_outputs = self.loss_step(state, input_microbatch, gradient_buffer)
             gradient_buffer, fwd_bwd_metrics = gradient_buffer
-            self._step_log("loss of loop step %s", fwd_bwd_metrics.loss)
+            self._step_log("loss of loop step %s", fwd_bwd_metrics.loss / self.config.learner.microbatches)
             if outputs_buffer == None:
                 outputs_buffer = fwd_bwd_metrics
             else:
                 outputs_buffer = accumulate_metrics(outputs_buffer, fwd_bwd_metrics)
 
-        self._step_log("gradient_buffer %s", gradient_buffer)
+        # self._step_log("gradient_buffer %s", gradient_buffer)
         return self.opt_step(state=state, gradient_buffer=gradient_buffer, output_buffer=outputs_buffer, total_accum=self.config.num_accum * self.config.learner.microbatches)
 
     def _pjit_train_step(self) -> jax.stages.Wrapped:
@@ -1113,6 +1115,11 @@ class SpmdTrainer(Module):
             model=forward_outputs.output_collection.summaries,
             learner=learner_output_collection.summaries,
         )
+
+        def _copy_zero(model_tree):
+            return jax.tree_map(lambda x: jnp.full_like(x, 0, dtype=jnp.bfloat16), model_tree)
+        gradient_buffer = _copy_zero(gradient_buffer)
+
         return updated_state, dict(
             summaries=summaries,
             loss=forward_outputs.loss,
