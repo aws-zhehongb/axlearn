@@ -105,11 +105,11 @@ def get_trainer_kwargs(
     flash_attention: bool = True,
 ) -> Dict[str, Any]:
     """Construct default trainer kwargs given a model size."""
-    # tokens_per_batch = 4 * (1024**2)  # 4M tokens.
-    tokens_per_batch = MAX_SEQUENCE_LENGTH[version] # one sequence per batch
+    #NOTE: tokens_per_batch is hardcoded to match apple/axlearn upstream
+    # This is not a bug. Do not fix unless to get to match upstream baseline
+    tokens_per_batch = 4 * (1024**2)  # 4M tokens.
     max_step = TOTAL_TOKENS[version][model_size] // tokens_per_batch
     max_sequence_length = MAX_SEQUENCE_LENGTH[version]
-    train_batch_size = tokens_per_batch // max_sequence_length
 
     # Whether to use grouped query attention.
     num_kv_heads = None
