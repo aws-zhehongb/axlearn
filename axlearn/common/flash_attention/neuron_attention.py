@@ -54,9 +54,10 @@ def _mha_forward(query, key, value, causal, softmax_scale):
   # Call the NKI kernel
   if os.environ.get('ENABLE_NEW_UNSHARDED_ATTN_KERNEL'):
       from neuronxcc.nki.kernels.attention import flash_attn_bwd, flash_fwd
-      from neuronxcc.starfish.penguin.targets.nki.private_api import vnc
+      import neuronxcc.nki.language as nl
+
       assert (num_heads % 2) == 0 and (num_heads // 2 > 0), f'unexpect num_heads: {num_heads}'
-      attn_output, lse = flash_fwd[batch_size, vnc(2), num_heads//2](q, k, v, seed, use_causal_mask=causal, softmax_scale=softmax_scale, mixed_precision=True, dropout_p=0.0)
+      attn_output, lse = flash_fwd[batch_size, nl.nc(2) * (num_heads//2)](q, k, v, seed, use_causal_mask=causal, softmax_scale=softmax_scale, mixed_precision=True, dropout_p=0.0)
   else:
       from neuronxcc.nki._private_kernels.legacy.attention import flash_fwd
       from neuronxcc.nki._private_kernels.attention import flash_fwd_shardable
